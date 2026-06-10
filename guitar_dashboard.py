@@ -636,81 +636,106 @@ def create_karaoke_video(captions, audio_path, output_path):
         return None
 
 
-# ── KARAOKE BROWSER PLAYER (YouTube IFrame API + JS sync) ─────────────────────
-def karaoke_player_html(video_id, captions):
+# ── KARAOKE PLAYER — YouTube + Audio upload + full controls ───────────────────
+def karaoke_player_html(video_id, captions, audio_b64=None, audio_mime="audio/wav"):
     """
-    Returns an HTML string that:
-    - Embeds the YouTube player (or plays instrumental if provided)
-    - Shows three lines of lyrics in real-time via YouTube IFrame API
+    Full karaoke player:
+    - If audio_b64 provided: HTML5 audio player (instrumental, no vocals) + synced lyrics
+    - Otherwise: YouTube IFrame player + synced lyrics
+    Both support play/pause/seek. Lyrics highlight in real time.
     """
     caps_json = json.dumps([
         {"s": round(s, 2), "e": round(e, 2), "t": t}
         for s, e, t in captions
     ])
-    return f"""
-<div style="background:#0d0d1a;padding:16px;border-radius:14px;font-family:Arial,sans-serif">
-  <div id="ytplayer-{video_id}"></div>
-  <div id="lyric-box" style="
-    text-align:center;padding:28px 20px;margin-top:18px;
-    background:#111827;border-radius:12px;border-left:4px solid #f0c040;
-    min-height:140px;display:flex;flex-direction:column;
-    justify-content:center;align-items:center;gap:14px;">
-    <div id="prev-l" style="color:#555;font-size:1.1rem;font-style:italic;min-height:1.4em"></div>
-    <div id="curr-l" style="color:#f0c040;font-size:2rem;font-weight:bold;min-height:2.4em;
-         text-shadow:0 0 20px rgba(240,192,64,0.5)"></div>
-    <div id="next-l" style="color:#555;font-size:1.1rem;font-style:italic;min-height:1.4em"></div>
-  </div>
-  <div style="text-align:center;margin-top:10px;color:#666;font-size:0.8rem">
-    ▶ לחץ Play בנגן כדי להפעיל את הסנכרון
-  </div>
-</div>
-<script>
-(function() {{
-  var captions = {caps_json};
-  var player;
-  var syncInterval = null;
-  var lastIdx = -1;
 
+    if audio_b64:
+        player_html = f"""
+<audio id="kplayer" controls style="width:100%;margin-bottom:14px;border-radius:8px"
+       src="data:{audio_mime};base64,{audio_b64}"></audio>"""
+        js_get_time = "document.getElementById('kplayer').currentTime"
+        js_setup = """
+  var audio = document.getElementById('kplayer');
+  audio.addEventListener('play',  function() {{ if(!si) si=setInterval(sync,80); }});
+  audio.addEventListener('pause', function() {{ clearInterval(si); si=null; }});
+  audio.addEventListener('ended', function() {{ clearInterval(si); si=null; }});
+  audio.addEventListener('seeked', sync);"""
+    else:
+        player_html = f'<div id="ytplayer-{video_id}" style="margin-bottom:14px"></div>'
+        js_get_time = "player && player.getCurrentTime ? player.getCurrentTime() : 0"
+        js_setup = f"""
   function onYouTubeIframeAPIReady() {{
     player = new YT.Player('ytplayer-{video_id}', {{
-      height: '340', width: '100%',
-      videoId: '{video_id}',
-      playerVars: {{rel: 0, modestbranding: 1}},
-      events: {{onStateChange: onStateChange}}
+      height:'340', width:'100%',
+      videoId:'{video_id}',
+      playerVars:{{rel:0,modestbranding:1}},
+      events:{{onStateChange:function(e){{
+        if(e.data===1){{ if(!si) si=setInterval(sync,80); }}
+        else {{ clearInterval(si); si=null; }}
+      }}}}
     }});
   }}
   window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+  if(!window.YT){{
+    var tag=document.createElement('script');
+    tag.src='https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  }} else {{ onYouTubeIframeAPIReady(); }}"""
 
-  function onStateChange(e) {{
-    if (e.data === 1) {{  // PLAYING
-      if (!syncInterval) syncInterval = setInterval(sync, 80);
-    }} else {{
-      clearInterval(syncInterval); syncInterval = null;
-    }}
-  }}
+    return f"""
+<div style="background:#0d0d1a;padding:18px;border-radius:14px;font-family:Arial,sans-serif;direction:ltr">
+  {player_html}
+
+  <!-- Lyrics display -->
+  <div style="text-align:center;padding:20px 16px;background:#111827;border-radius:12px;
+       border:2px solid #f0c040;min-height:160px;display:flex;flex-direction:column;
+       justify-content:center;align-items:center;gap:12px;position:relative">
+
+    <div id="kprev" style="color:#444;font-size:1.05rem;min-height:1.4em;
+         transition:all 0.3s;font-style:italic"></div>
+
+    <div id="kcurr" style="color:#f0c040;font-size:2rem;font-weight:bold;
+         min-height:2.6em;text-shadow:0 0 24px rgba(240,192,64,0.6);
+         transition:all 0.2s;text-align:center;padding:0 20px"></div>
+
+    <div id="knext" style="color:#444;font-size:1.05rem;min-height:1.4em;
+         transition:all 0.3s;font-style:italic"></div>
+
+    <!-- Progress bar -->
+    <div style="width:90%;background:#222;border-radius:4px;height:4px;margin-top:8px">
+      <div id="kprog" style="background:#f0c040;height:4px;border-radius:4px;width:0%;transition:width 0.1s"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {{
+  var caps = {caps_json};
+  var player = null;
+  var si = null;
+  var lastIdx = -2;
+  var totalDur = caps.length > 0 ? caps[caps.length-1].e : 0;
 
   function sync() {{
-    if (!player || !player.getCurrentTime) return;
-    var t = player.getCurrentTime();
+    var t = {js_get_time};
     var idx = -1;
-    for (var i = 0; i < captions.length; i++) {{
-      if (captions[i].s <= t && captions[i].e >= t) {{ idx = i; break; }}
+    for(var i=0; i<caps.length; i++) {{
+      if(caps[i].s <= t && caps[i].e >= t) {{ idx=i; break; }}
     }}
-    if (idx === lastIdx) return;
-    lastIdx = idx;
-    document.getElementById('curr-l').textContent = idx >= 0 ? captions[idx].t : '';
-    document.getElementById('prev-l').textContent = idx > 0 ? captions[idx-1].t : '';
-    document.getElementById('next-l').textContent =
-      (idx >= 0 && idx < captions.length-1) ? captions[idx+1].t : '';
+    if(idx !== lastIdx) {{
+      lastIdx = idx;
+      document.getElementById('kcurr').textContent = idx>=0 ? caps[idx].t : '';
+      document.getElementById('kprev').textContent = idx>0 ? caps[idx-1].t : '';
+      document.getElementById('knext').textContent = (idx>=0 && idx<caps.length-1) ? caps[idx+1].t : '';
+    }}
+    // Progress bar
+    if(totalDur > 0) {{
+      var pct = Math.min(100, (t/totalDur)*100);
+      document.getElementById('kprog').style.width = pct + '%';
+    }}
   }}
 
-  if (!window.YT) {{
-    var tag = document.createElement('script');
-    tag.src = 'https://www.youtube.com/iframe_api';
-    document.head.appendChild(tag);
-  }} else {{
-    onYouTubeIframeAPIReady();
-  }}
+  {js_setup}
 }})();
 </script>
 """
@@ -891,14 +916,11 @@ if search_btn and song_input.strip():
             tmpdir = tempfile.mkdtemp()
             with st.spinner("🎵 מוריד אודיו מ-YouTube..."):
                 audio_path, err = download_audio_yt_dlp(video_id, tmpdir)
-
             if audio_path:
                 with st.spinner("🤖 מפריד את הווקאל (demucs AI) — עשוי לקחת 2-5 דקות..."):
                     instrumental_path, sep_err = separate_vocals_demucs(audio_path, tmpdir)
                 if sep_err:
-                    st.info(f"💡 הסרת ווקאל לא זמינה בענן: {sep_err}")
-            elif err:
-                st.info("💡 הורדת אודיו חסומה בענן — הקריוקי יעבוד עם הנגן הרגיל")
+                    instrumental_path = None
 
     # ── YOUTUBE / KARAOKE PLAYER ───────────────────────────────────────────────
     st.markdown("---")
@@ -907,49 +929,47 @@ if search_btn and song_input.strip():
         st.markdown("<h3 style='color:#9b59b6'>🎤 קריוקי — מילים מסונכרנות</h3>",
                     unsafe_allow_html=True)
 
+        # אפשרות העלאת קובץ ללא זמר
+        st.markdown(
+            "<p style='color:#aaa;font-size:0.9rem'>🎵 להפעלה עם מוזיקה בלי זמר — "
+            "הורד את השיר דרך <a href='https://vocalremover.org' target='_blank' style='color:#9b59b6'>vocalremover.org</a> "
+            "והעלה כאן:</p>",
+            unsafe_allow_html=True,
+        )
+        uploaded = st.file_uploader("העלה קובץ אודיו (ללא זמר)", type=["mp3","wav","ogg","m4a"], key="karaoke_audio")
+
+        audio_b64 = None
+        audio_mime = "audio/wav"
+        if uploaded:
+            import base64
+            audio_bytes = uploaded.read()
+            audio_b64 = base64.b64encode(audio_bytes).decode()
+            ext = uploaded.name.split(".")[-1].lower()
+            audio_mime = {"mp3":"audio/mpeg","wav":"audio/wav","ogg":"audio/ogg","m4a":"audio/mp4"}.get(ext,"audio/wav")
+        elif instrumental_path and os.path.exists(instrumental_path):
+            import base64
+            with open(instrumental_path, "rb") as f:
+                audio_b64 = base64.b64encode(f.read()).decode()
+
         if captions:
-            # Full sync via YouTube IFrame API
-            components.html(karaoke_player_html(video_id, captions), height=570)
+            components.html(karaoke_player_html(video_id, captions, audio_b64, audio_mime), height=600)
         else:
-            # No captions — show the YouTube video + animated fallback
+            # No captions — YouTube player + animated fallback
             embed_url = f"https://www.youtube.com/embed/{video_id}"
             st.markdown(
                 f'<iframe width="100%" height="340" src="{embed_url}" '
                 f'frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>',
                 unsafe_allow_html=True,
             )
-            st.caption("⚠️ לא נמצאו כתוביות — מוצגות המילים ללא סנכרון מדויק")
+            st.caption("⚠️ לא נמצאו כתוביות לשיר זה")
             lyric_source = [l["lyric_line"] for l in adapted_paired] if adapted_paired else (lyrics.splitlines() if lyrics else [])
             if lyric_source:
                 components.html(karaoke_lyrics_animated_html(lyric_source), height=220)
 
-        # Instrumental download
         if instrumental_path and os.path.exists(instrumental_path):
-            st.markdown("<h4 style='color:#9b59b6'>🎵 מוזיקה ללא ווקאל</h4>",
-                        unsafe_allow_html=True)
             with open(instrumental_path, "rb") as f:
-                st.download_button(
-                    "⬇️ הורד מוזיקה (ללא זמר)",
-                    data=f.read(),
-                    file_name=f"{song}_instrumental.wav",
-                    mime="audio/wav",
-                )
-
-            # Create karaoke video
-            if captions and MOVIEPY_OK:
-                video_path = os.path.join(tempfile.mkdtemp(), "karaoke.mp4")
-                with st.spinner("🎬 יוצר וידאו קריוקי..."):
-                    result_path = create_karaoke_video(captions, instrumental_path, video_path)
-                if result_path and os.path.exists(result_path):
-                    with open(result_path, "rb") as f:
-                        st.download_button(
-                            "⬇️ הורד וידאו קריוקי (MP4)",
-                            data=f.read(),
-                            file_name=f"{song}_karaoke.mp4",
-                            mime="video/mp4",
-                        )
-            elif captions and not MOVIEPY_OK:
-                st.info("💡 להורדת וידאו קריוקי התקן:  pip install moviepy pillow")
+                st.download_button("⬇️ הורד מוזיקה (ללא זמר)", data=f.read(),
+                                   file_name=f"{song}_instrumental.wav", mime="audio/wav")
 
     else:
         # Normal YouTube embed
