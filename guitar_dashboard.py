@@ -459,6 +459,41 @@ def parse_vtt(vtt_text):
     return cues
 
 
+def get_captions_from_youtube(video_id):
+    """
+    Fetch auto-captions directly from YouTube's timedtext API — no yt-dlp needed.
+    Tries Hebrew then English.
+    """
+    for lang in ["iw", "he", "en"]:
+        try:
+            url = f"https://www.youtube.com/api/timedtext?v={video_id}&lang={lang}&fmt=vtt"
+            r = requests.get(url, headers=HEADERS, timeout=8)
+            if r.status_code == 200 and "-->)" not in r.text and len(r.text) > 100:
+                cues = parse_vtt(r.text)
+                if cues:
+                    return cues
+        except Exception:
+            pass
+    # Fallback: try fetching caption tracks list
+    try:
+        r = requests.get(
+            f"https://www.youtube.com/watch?v={video_id}", headers=HEADERS, timeout=10
+        )
+        tracks = re.findall(r'"captionTracks":\[(.*?)\]', r.text)
+        if tracks:
+            urls = re.findall(r'"baseUrl":"([^"]+)"', tracks[0])
+            for u in urls[:3]:
+                u = u.replace("\\u0026", "&") + "&fmt=vtt"
+                r2 = requests.get(u, headers=HEADERS, timeout=8)
+                if r2.status_code == 200:
+                    cues = parse_vtt(r2.text)
+                    if cues:
+                        return cues
+    except Exception:
+        pass
+    return []
+
+
 def get_captions_yt_dlp(video_id):
     """Download auto-generated captions via yt-dlp. Returns list of (start, end, text)."""
     if not YT_DLP_OK:
@@ -847,8 +882,10 @@ if search_btn and song_input.strip():
     captions = []
 
     if karaoke_mode and video_id:
-        with st.spinner("🎤 מוריד כתוביות לסנכרון מילים..."):
-            captions = get_captions_yt_dlp(video_id)
+        with st.spinner("🎤 מביא כתוביות לסנכרון מילים..."):
+            captions = get_captions_from_youtube(video_id)
+            if not captions:
+                captions = get_captions_yt_dlp(video_id)
 
         if YT_DLP_OK:
             tmpdir = tempfile.mkdtemp()
@@ -859,9 +896,9 @@ if search_btn and song_input.strip():
                 with st.spinner("🤖 מפריד את הווקאל (demucs AI) — עשוי לקחת 2-5 דקות..."):
                     instrumental_path, sep_err = separate_vocals_demucs(audio_path, tmpdir)
                 if sep_err:
-                    st.warning(f"⚠️ {sep_err}")
+                    st.info(f"💡 הסרת ווקאל לא זמינה בענן: {sep_err}")
             elif err:
-                st.warning(f"⚠️ {err}")
+                st.info("💡 הורדת אודיו חסומה בענן — הקריוקי יעבוד עם הנגן הרגיל")
 
     # ── YOUTUBE / KARAOKE PLAYER ───────────────────────────────────────────────
     st.markdown("---")
