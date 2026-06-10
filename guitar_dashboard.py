@@ -122,6 +122,21 @@ def youtube_search(query):
     return None
 
 
+def youtube_search_karaoke(query):
+    """Search for a karaoke / instrumental version of the song on YouTube."""
+    for suffix in [" קריוקי", " karaoke official", " instrumental", " backing track", " karaoke"]:
+        try:
+            url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query + suffix)
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            ids    = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', r.text)
+            titles = re.findall(r'"title":\{"runs":\[\{"text":"([^"]+)"', r.text)
+            if ids:
+                return {"video_id": ids[0], "title": titles[0] if titles else query}
+        except Exception:
+            pass
+    return None
+
+
 def get_youtube_description(video_id):
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -636,141 +651,54 @@ def create_karaoke_video(captions, audio_path, output_path):
         return None
 
 
-# ── KARAOKE PLAYER — full YouTube-like controls + synced lyrics ────────────────
-def karaoke_player_html(video_id, captions, audio_b64=None, audio_mime="audio/wav"):
+# ── KARAOKE PLAYER — YouTube player + synced lyrics ───────────────────────────
+def karaoke_player_html(video_id, captions):
     caps_json = json.dumps([
         {"s": round(s, 2), "e": round(e, 2), "t": t}
         for s, e, t in captions
     ])
 
-    audio_src = f"data:{audio_mime};base64,{audio_b64}" if audio_b64 else ""
-    has_audio = "true" if audio_b64 else "false"
-
     return f"""
-<style>
-@keyframes bgpulse {{
-  0%,100% {{ background-position: 0% 50%; }}
-  50% {{ background-position: 100% 50%; }}
-}}
-@keyframes barwave {{
-  0%,100% {{ height:8px; }}
-  50% {{ height:32px; }}
-}}
-</style>
+<div style="background:#0d0d1a;border-radius:16px;overflow:hidden;
+     font-family:Arial,sans-serif;width:100%;direction:ltr;
+     box-shadow:0 8px 40px rgba(0,0,0,0.7)">
 
-<div id="kplayer" style="
-  background:linear-gradient(135deg,#0d0d1a,#1a1a2e,#0d1a2e);
-  background-size:300% 300%;
-  border-radius:16px; overflow:hidden; font-family:Arial,sans-serif;
-  width:100%; max-width:900px; margin:0 auto; direction:ltr;
-  box-shadow:0 8px 40px rgba(0,0,0,0.7)">
+  <!-- YouTube player -->
+  <div id="ytk-{video_id}"></div>
 
-  <!-- TOP BAR -->
-  <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;
-       background:rgba(0,0,0,0.4);border-bottom:1px solid #222">
-    <span style="font-size:1.5rem">🎤</span>
-    <span style="color:#f0c040;font-weight:bold;font-size:1.1rem">קריוקי</span>
-    <span style="color:#666;font-size:0.85rem;margin-right:auto" id="kstatus">לחץ ▶ להתחלה</span>
+  <!-- Lyrics display -->
+  <div style="text-align:center;padding:24px 20px;background:#111827;
+       border-top:3px solid #f0c040;min-height:170px;
+       display:flex;flex-direction:column;justify-content:center;
+       align-items:center;gap:14px">
+    <div id="kprev" style="color:#3a3a5c;font-size:1.05rem;font-style:italic;min-height:1.4em;transition:all 0.3s"></div>
+    <div id="kcurr" style="color:#f0c040;font-size:2.1rem;font-weight:bold;
+         text-shadow:0 0 28px rgba(240,192,64,0.55);min-height:2.6em;
+         text-align:center;max-width:720px;line-height:1.3;transition:all 0.2s"></div>
+    <div id="knext" style="color:#3a3a5c;font-size:1.05rem;font-style:italic;min-height:1.4em;transition:all 0.3s"></div>
   </div>
 
-  <!-- VISUALIZER (animated bars while playing) -->
-  <div id="kvis" style="display:flex;align-items:flex-end;justify-content:center;
-       gap:3px;height:48px;padding:0 20px;background:rgba(0,0,0,0.2);
-       border-bottom:1px solid #1a1a2e">
-    {''.join([f'<div class="vbar" style="width:4px;background:#f0c040;border-radius:2px;height:8px;opacity:0.7;animation:barwave {0.4+i*0.07:.2f}s ease-in-out infinite alternate paused" id="vb{i}"></div>' for i in range(40)])}
-  </div>
-
-  <!-- LYRICS AREA -->
-  <div style="text-align:center;padding:30px 24px 20px;min-height:200px;
-       display:flex;flex-direction:column;justify-content:center;align-items:center;gap:16px">
-    <div id="kprev" style="color:#3a3a5c;font-size:1.1rem;font-style:italic;
-         min-height:1.5em;transition:all 0.4s;max-width:700px"></div>
-    <div id="kcurr" style="color:#f0c040;font-size:2.2rem;font-weight:bold;
-         min-height:3em;text-shadow:0 0 32px rgba(240,192,64,0.6);
-         transition:all 0.25s;text-align:center;max-width:700px;
-         line-height:1.3"></div>
-    <div id="knext" style="color:#3a3a5c;font-size:1.1rem;font-style:italic;
-         min-height:1.5em;transition:all 0.4s;max-width:700px"></div>
-  </div>
-
-  <!-- PROGRESS BAR -->
-  <div style="padding:0 20px">
-    <div id="progbar" style="width:100%;background:#1a1a2e;border-radius:6px;
-         height:6px;cursor:pointer;position:relative" onclick="kSeek(event)">
-      <div id="kprog" style="background:linear-gradient(90deg,#f0c040,#e67e22);
-           height:6px;border-radius:6px;width:0%;transition:width 0.1s;
-           pointer-events:none"></div>
+  <div style="padding:6px 16px 10px;background:#111827;
+       border-top:1px solid #1a1a2e;text-align:center">
+    <div style="width:100%;background:#1a1a2e;border-radius:4px;height:4px">
+      <div id="kprog" style="background:#f0c040;height:4px;border-radius:4px;width:0%"></div>
     </div>
-    <div style="display:flex;justify-content:space-between;color:#555;
-         font-size:0.78rem;margin-top:4px">
-      <span id="ktime">0:00</span>
-      <span id="kdur">0:00</span>
-    </div>
+    <p style="color:#555;font-size:0.78rem;margin:6px 0 0">
+      ▶ לחץ Play בנגן — הכתוביות יסונכרנו אוטומטית
+    </p>
   </div>
-
-  <!-- CONTROLS -->
-  <div style="display:flex;justify-content:center;align-items:center;
-       gap:16px;padding:16px 20px 20px">
-
-    <button onclick="kSkip(-10)"
-      style="background:transparent;color:#f0c040;border:2px solid #333;
-             border-radius:50%;width:44px;height:44px;font-size:0.85rem;
-             cursor:pointer;font-weight:bold;transition:border-color 0.2s"
-      onmouseover="this.style.borderColor='#f0c040'"
-      onmouseout="this.style.borderColor='#333'">-10</button>
-
-    <button id="kplaybtn" onclick="kToggle()"
-      style="background:#f0c040;color:#000;border:none;border-radius:50%;
-             width:62px;height:62px;font-size:1.8rem;cursor:pointer;
-             font-weight:bold;box-shadow:0 0 20px rgba(240,192,64,0.4);
-             transition:transform 0.1s"
-      onmousedown="this.style.transform='scale(0.92)'"
-      onmouseup="this.style.transform='scale(1)'">▶</button>
-
-    <button onclick="kSkip(10)"
-      style="background:transparent;color:#f0c040;border:2px solid #333;
-             border-radius:50%;width:44px;height:44px;font-size:0.85rem;
-             cursor:pointer;font-weight:bold;transition:border-color 0.2s"
-      onmouseover="this.style.borderColor='#f0c040'"
-      onmouseout="this.style.borderColor='#333'">+10</button>
-
-    <div style="display:flex;align-items:center;gap:6px;margin-right:10px">
-      <span style="font-size:1rem">🔊</span>
-      <input type="range" id="kvol" min="0" max="1" step="0.05" value="1"
-        style="width:80px;accent-color:#f0c040;cursor:pointer"
-        oninput="if(document.getElementById('kaud'))document.getElementById('kaud').volume=this.value">
-    </div>
-  </div>
-
-  <!-- Hidden audio element -->
-  <audio id="kaud" src="{audio_src}" preload="auto" style="display:none"></audio>
-
-  <!-- No audio message -->
-  {'<div id="noaudio-msg" style="text-align:center;padding:8px;color:#666;font-size:0.85rem;border-top:1px solid #1a1a2e">⬆️ העלה קובץ אודיו (ללא זמר) למעלה כדי להפעיל את הנגן</div>' if not audio_b64 else ''}
 </div>
 
 <script>
 (function(){{
   var caps={caps_json};
-  var aud=document.getElementById('kaud');
-  var hasAudio={has_audio};
-  var si=null, lastIdx=-2, playing=false;
+  var player=null, si=null, lastIdx=-2;
 
-  function fmt(s){{
-    if(!s||isNaN(s))return'0:00';
-    var m=Math.floor(s/60),sec=Math.floor(s%60);
-    return m+':'+(sec<10?'0':'')+sec;
-  }}
-
-  function setVis(on){{
-    var bars=document.querySelectorAll('.vbar');
-    bars.forEach(function(b){{b.style.animationPlayState=on?'running':'paused';}});
-  }}
-
-  function syncLyrics(){{
-    var t=hasAudio?aud.currentTime:0;
-    document.getElementById('ktime').textContent=fmt(t);
-    if(aud.duration) document.getElementById('kprog').style.width=(t/aud.duration*100)+'%';
+  function sync(){{
+    if(!player||!player.getCurrentTime) return;
+    var t=player.getCurrentTime();
+    var dur=player.getDuration()||0;
+    if(dur>0) document.getElementById('kprog').style.width=(t/dur*100)+'%';
     var idx=-1;
     for(var i=0;i<caps.length;i++){{if(caps[i].s<=t&&caps[i].e>=t){{idx=i;break;}}}}
     if(idx!==lastIdx){{
@@ -781,48 +709,22 @@ def karaoke_player_html(video_id, captions, audio_b64=None, audio_mime="audio/wa
     }}
   }}
 
-  if(hasAudio){{
-    aud.addEventListener('loadedmetadata',function(){{
-      document.getElementById('kdur').textContent=fmt(aud.duration);
+  function onYouTubeIframeAPIReady(){{
+    player=new YT.Player('ytk-{video_id}',{{
+      height:'360',width:'100%',videoId:'{video_id}',
+      playerVars:{{rel:0,modestbranding:1}},
+      events:{{onStateChange:function(e){{
+        if(e.data===1){{if(!si)si=setInterval(sync,80);}}
+        else{{clearInterval(si);si=null;}}
+      }}}}
     }});
-    aud.addEventListener('play',function(){{
-      playing=true;
-      document.getElementById('kplaybtn').textContent='⏸';
-      document.getElementById('kstatus').textContent='מנגן...';
-      setVis(true);
-      if(!si) si=setInterval(syncLyrics,80);
-    }});
-    aud.addEventListener('pause',function(){{
-      playing=false;
-      document.getElementById('kplaybtn').textContent='▶';
-      document.getElementById('kstatus').textContent='מושהה';
-      setVis(false);
-      clearInterval(si);si=null;
-    }});
-    aud.addEventListener('ended',function(){{
-      playing=false;
-      document.getElementById('kplaybtn').textContent='▶';
-      document.getElementById('kstatus').textContent='סיים';
-      setVis(false);
-      clearInterval(si);si=null;
-    }});
-    aud.addEventListener('seeked',syncLyrics);
   }}
-
-  window.kToggle=function(){{
-    if(!hasAudio){{alert('העלה קובץ אודיו (ללא זמר) תחילה');return;}}
-    aud.paused?aud.play():aud.pause();
-  }};
-  window.kSkip=function(s){{
-    if(!hasAudio)return;
-    aud.currentTime=Math.max(0,Math.min(aud.duration||999,aud.currentTime+s));
-  }};
-  window.kSeek=function(e){{
-    if(!hasAudio||!aud.duration)return;
-    var bar=document.getElementById('progbar');
-    var ratio=(e.clientX-bar.getBoundingClientRect().left)/bar.offsetWidth;
-    aud.currentTime=Math.max(0,Math.min(aud.duration,ratio*aud.duration));
-  }};
+  window.onYouTubeIframeAPIReady=onYouTubeIframeAPIReady;
+  if(!window.YT){{
+    var tag=document.createElement('script');
+    tag.src='https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  }} else {{ onYouTubeIframeAPIReady(); }}
 }})();
 </script>
 """
@@ -992,22 +894,17 @@ if search_btn and song_input.strip():
     # ── KARAOKE PROCESSING ─────────────────────────────────────────────────────
     instrumental_path = None
     captions = []
+    karaoke_video_id = None
 
     if karaoke_mode and video_id:
-        with st.spinner("🎤 מביא כתוביות לסנכרון מילים..."):
+        with st.spinner("🎤 מחפש גרסת קריוקי ב-YouTube ומביא כתוביות..."):
+            # Get captions from original video
             captions = get_captions_from_youtube(video_id)
             if not captions:
                 captions = get_captions_yt_dlp(video_id)
-
-        if YT_DLP_OK:
-            tmpdir = tempfile.mkdtemp()
-            with st.spinner("🎵 מוריד אודיו מ-YouTube..."):
-                audio_path, err = download_audio_yt_dlp(video_id, tmpdir)
-            if audio_path:
-                with st.spinner("🤖 מפריד את הווקאל (demucs AI) — עשוי לקחת 2-5 דקות..."):
-                    instrumental_path, sep_err = separate_vocals_demucs(audio_path, tmpdir)
-                if sep_err:
-                    instrumental_path = None
+            # Find karaoke/instrumental version on YouTube
+            yt_karaoke = youtube_search_karaoke(song)
+            karaoke_video_id = yt_karaoke["video_id"] if yt_karaoke else video_id
 
     # ── YOUTUBE / KARAOKE PLAYER ───────────────────────────────────────────────
     st.markdown("---")
@@ -1016,47 +913,8 @@ if search_btn and song_input.strip():
         st.markdown("<h3 style='color:#9b59b6'>🎤 קריוקי — מילים מסונכרנות</h3>",
                     unsafe_allow_html=True)
 
-        # אפשרות העלאת קובץ ללא זמר
-        st.markdown(
-            "<p style='color:#aaa;font-size:0.9rem'>🎵 להפעלה עם מוזיקה בלי זמר — "
-            "הורד את השיר דרך <a href='https://vocalremover.org' target='_blank' style='color:#9b59b6'>vocalremover.org</a> "
-            "והעלה כאן:</p>",
-            unsafe_allow_html=True,
-        )
-        uploaded = st.file_uploader("העלה קובץ אודיו (ללא זמר)", type=["mp3","wav","ogg","m4a"], key="karaoke_audio")
-
-        audio_b64 = None
-        audio_mime = "audio/wav"
-        if uploaded:
-            import base64
-            audio_bytes = uploaded.read()
-            audio_b64 = base64.b64encode(audio_bytes).decode()
-            ext = uploaded.name.split(".")[-1].lower()
-            audio_mime = {"mp3":"audio/mpeg","wav":"audio/wav","ogg":"audio/ogg","m4a":"audio/mp4"}.get(ext,"audio/wav")
-        elif instrumental_path and os.path.exists(instrumental_path):
-            import base64
-            with open(instrumental_path, "rb") as f:
-                audio_b64 = base64.b64encode(f.read()).decode()
-
-        if captions:
-            components.html(karaoke_player_html(video_id, captions, audio_b64, audio_mime), height=600)
-        else:
-            # No captions — YouTube player + animated fallback
-            embed_url = f"https://www.youtube.com/embed/{video_id}"
-            st.markdown(
-                f'<iframe width="100%" height="340" src="{embed_url}" '
-                f'frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>',
-                unsafe_allow_html=True,
-            )
-            st.caption("⚠️ לא נמצאו כתוביות לשיר זה")
-            lyric_source = [l["lyric_line"] for l in adapted_paired] if adapted_paired else (lyrics.splitlines() if lyrics else [])
-            if lyric_source:
-                components.html(karaoke_lyrics_animated_html(lyric_source), height=220)
-
-        if instrumental_path and os.path.exists(instrumental_path):
-            with open(instrumental_path, "rb") as f:
-                st.download_button("⬇️ הורד מוזיקה (ללא זמר)", data=f.read(),
-                                   file_name=f"{song}_instrumental.wav", mime="audio/wav")
+        player_vid = karaoke_video_id or video_id
+        components.html(karaoke_player_html(player_vid, captions), height=700)
 
     else:
         # Normal YouTube embed
