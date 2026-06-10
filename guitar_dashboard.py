@@ -643,95 +643,136 @@ def karaoke_player_html(video_id, captions, audio_b64=None, audio_mime="audio/wa
         for s, e, t in captions
     ])
 
-    if audio_b64:
-        # ── HTML5 audio mode (instrumental uploaded) ──────────────────────────
-        return f"""
-<div style="background:#0d0d1a;padding:20px;border-radius:16px;font-family:Arial,sans-serif;
-     max-width:860px;margin:0 auto;direction:ltr">
+    audio_src = f"data:{audio_mime};base64,{audio_b64}" if audio_b64 else ""
+    has_audio = "true" if audio_b64 else "false"
 
-  <audio id="kaud" src="data:{audio_mime};base64,{audio_b64}" preload="auto"></audio>
+    return f"""
+<style>
+@keyframes bgpulse {{
+  0%,100% {{ background-position: 0% 50%; }}
+  50% {{ background-position: 100% 50%; }}
+}}
+@keyframes barwave {{
+  0%,100% {{ height:8px; }}
+  50% {{ height:32px; }}
+}}
+</style>
 
-  <!-- Lyrics box -->
-  <div style="text-align:center;padding:24px 20px;background:#111827;border-radius:14px;
-       border:2px solid #f0c040;min-height:180px;display:flex;flex-direction:column;
-       justify-content:center;align-items:center;gap:14px;margin-bottom:18px">
-    <div id="kprev" style="color:#444;font-size:1.05rem;font-style:italic;min-height:1.4em;
-         transition:opacity 0.3s"></div>
-    <div id="kcurr" style="color:#f0c040;font-size:2.1rem;font-weight:bold;min-height:2.6em;
-         text-shadow:0 0 28px rgba(240,192,64,0.55);text-align:center;padding:0 16px;
-         transition:all 0.2s"></div>
-    <div id="knext" style="color:#444;font-size:1.05rem;font-style:italic;min-height:1.4em;
-         transition:opacity 0.3s"></div>
+<div id="kplayer" style="
+  background:linear-gradient(135deg,#0d0d1a,#1a1a2e,#0d1a2e);
+  background-size:300% 300%;
+  border-radius:16px; overflow:hidden; font-family:Arial,sans-serif;
+  width:100%; max-width:900px; margin:0 auto; direction:ltr;
+  box-shadow:0 8px 40px rgba(0,0,0,0.7)">
+
+  <!-- TOP BAR -->
+  <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;
+       background:rgba(0,0,0,0.4);border-bottom:1px solid #222">
+    <span style="font-size:1.5rem">🎤</span>
+    <span style="color:#f0c040;font-weight:bold;font-size:1.1rem">קריוקי</span>
+    <span style="color:#666;font-size:0.85rem;margin-right:auto" id="kstatus">לחץ ▶ להתחלה</span>
   </div>
 
-  <!-- Progress bar (clickable) -->
-  <div id="progbar" style="width:100%;background:#222;border-radius:6px;height:6px;
-       cursor:pointer;margin-bottom:6px;position:relative" onclick="seekClick(event)">
-    <div id="kprog" style="background:#f0c040;height:6px;border-radius:6px;width:0%;
-         pointer-events:none;transition:width 0.1s"></div>
+  <!-- VISUALIZER (animated bars while playing) -->
+  <div id="kvis" style="display:flex;align-items:flex-end;justify-content:center;
+       gap:3px;height:48px;padding:0 20px;background:rgba(0,0,0,0.2);
+       border-bottom:1px solid #1a1a2e">
+    {''.join([f'<div class="vbar" style="width:4px;background:#f0c040;border-radius:2px;height:8px;opacity:0.7;animation:barwave {0.4+i*0.07:.2f}s ease-in-out infinite alternate paused" id="vb{i}"></div>' for i in range(40)])}
   </div>
 
-  <!-- Time display -->
-  <div style="display:flex;justify-content:space-between;color:#666;font-size:0.8rem;
-       margin-bottom:14px">
-    <span id="ktime">0:00</span>
-    <span id="kdur">0:00</span>
+  <!-- LYRICS AREA -->
+  <div style="text-align:center;padding:30px 24px 20px;min-height:200px;
+       display:flex;flex-direction:column;justify-content:center;align-items:center;gap:16px">
+    <div id="kprev" style="color:#3a3a5c;font-size:1.1rem;font-style:italic;
+         min-height:1.5em;transition:all 0.4s;max-width:700px"></div>
+    <div id="kcurr" style="color:#f0c040;font-size:2.2rem;font-weight:bold;
+         min-height:3em;text-shadow:0 0 32px rgba(240,192,64,0.6);
+         transition:all 0.25s;text-align:center;max-width:700px;
+         line-height:1.3"></div>
+    <div id="knext" style="color:#3a3a5c;font-size:1.1rem;font-style:italic;
+         min-height:1.5em;transition:all 0.4s;max-width:700px"></div>
   </div>
 
-  <!-- Controls -->
-  <div style="display:flex;justify-content:center;align-items:center;gap:14px">
-    <button onclick="skip(-10)" title="10 שניות אחורה"
-      style="background:#1e1e2e;color:#f0c040;border:2px solid #f0c040;border-radius:50%;
-             width:48px;height:48px;font-size:1rem;cursor:pointer;font-weight:bold">-10</button>
+  <!-- PROGRESS BAR -->
+  <div style="padding:0 20px">
+    <div id="progbar" style="width:100%;background:#1a1a2e;border-radius:6px;
+         height:6px;cursor:pointer;position:relative" onclick="kSeek(event)">
+      <div id="kprog" style="background:linear-gradient(90deg,#f0c040,#e67e22);
+           height:6px;border-radius:6px;width:0%;transition:width 0.1s;
+           pointer-events:none"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;color:#555;
+         font-size:0.78rem;margin-top:4px">
+      <span id="ktime">0:00</span>
+      <span id="kdur">0:00</span>
+    </div>
+  </div>
 
-    <button id="playbtn" onclick="togglePlay()"
+  <!-- CONTROLS -->
+  <div style="display:flex;justify-content:center;align-items:center;
+       gap:16px;padding:16px 20px 20px">
+
+    <button onclick="kSkip(-10)"
+      style="background:transparent;color:#f0c040;border:2px solid #333;
+             border-radius:50%;width:44px;height:44px;font-size:0.85rem;
+             cursor:pointer;font-weight:bold;transition:border-color 0.2s"
+      onmouseover="this.style.borderColor='#f0c040'"
+      onmouseout="this.style.borderColor='#333'">-10</button>
+
+    <button id="kplaybtn" onclick="kToggle()"
       style="background:#f0c040;color:#000;border:none;border-radius:50%;
-             width:60px;height:60px;font-size:1.6rem;cursor:pointer;font-weight:bold">▶</button>
+             width:62px;height:62px;font-size:1.8rem;cursor:pointer;
+             font-weight:bold;box-shadow:0 0 20px rgba(240,192,64,0.4);
+             transition:transform 0.1s"
+      onmousedown="this.style.transform='scale(0.92)'"
+      onmouseup="this.style.transform='scale(1)'">▶</button>
 
-    <button onclick="skip(10)" title="10 שניות קדימה"
-      style="background:#1e1e2e;color:#f0c040;border:2px solid #f0c040;border-radius:50%;
-             width:48px;height:48px;font-size:1rem;cursor:pointer;font-weight:bold">+10</button>
+    <button onclick="kSkip(10)"
+      style="background:transparent;color:#f0c040;border:2px solid #333;
+             border-radius:50%;width:44px;height:44px;font-size:0.85rem;
+             cursor:pointer;font-weight:bold;transition:border-color 0.2s"
+      onmouseover="this.style.borderColor='#f0c040'"
+      onmouseout="this.style.borderColor='#333'">+10</button>
 
-    <!-- Volume -->
-    <input type="range" id="vol" min="0" max="1" step="0.05" value="1"
-      oninput="document.getElementById('kaud').volume=this.value"
-      style="width:90px;accent-color:#f0c040">
-    <span style="color:#666;font-size:0.85rem">🔊</span>
+    <div style="display:flex;align-items:center;gap:6px;margin-right:10px">
+      <span style="font-size:1rem">🔊</span>
+      <input type="range" id="kvol" min="0" max="1" step="0.05" value="1"
+        style="width:80px;accent-color:#f0c040;cursor:pointer"
+        oninput="if(document.getElementById('kaud'))document.getElementById('kaud').volume=this.value">
+    </div>
   </div>
+
+  <!-- Hidden audio element -->
+  <audio id="kaud" src="{audio_src}" preload="auto" style="display:none"></audio>
+
+  <!-- No audio message -->
+  {'<div id="noaudio-msg" style="text-align:center;padding:8px;color:#666;font-size:0.85rem;border-top:1px solid #1a1a2e">⬆️ העלה קובץ אודיו (ללא זמר) למעלה כדי להפעיל את הנגן</div>' if not audio_b64 else ''}
 </div>
 
 <script>
 (function(){{
   var caps={caps_json};
   var aud=document.getElementById('kaud');
-  var si=null, lastIdx=-2;
+  var hasAudio={has_audio};
+  var si=null, lastIdx=-2, playing=false;
 
-  aud.addEventListener('loadedmetadata',function(){{
-    document.getElementById('kdur').textContent=fmt(aud.duration);
-  }});
-  aud.addEventListener('play',function(){{ document.getElementById('playbtn').textContent='⏸'; if(!si) si=setInterval(sync,80); }});
-  aud.addEventListener('pause',function(){{ document.getElementById('playbtn').textContent='▶'; clearInterval(si);si=null; }});
-  aud.addEventListener('ended',function(){{ document.getElementById('playbtn').textContent='▶'; clearInterval(si);si=null; }});
-  aud.addEventListener('seeked',sync);
-
-  function togglePlay(){{ aud.paused?aud.play():aud.pause(); }}
-  function skip(s){{ aud.currentTime=Math.max(0,Math.min(aud.duration||999,aud.currentTime+s)); }}
-  function seekClick(e){{
-    var bar=document.getElementById('progbar');
-    var ratio=(e.clientX-bar.getBoundingClientRect().left)/bar.offsetWidth;
-    aud.currentTime=ratio*(aud.duration||0);
-  }}
   function fmt(s){{
-    if(!s||isNaN(s)) return '0:00';
+    if(!s||isNaN(s))return'0:00';
     var m=Math.floor(s/60),sec=Math.floor(s%60);
     return m+':'+(sec<10?'0':'')+sec;
   }}
-  function sync(){{
-    var t=aud.currentTime;
+
+  function setVis(on){{
+    var bars=document.querySelectorAll('.vbar');
+    bars.forEach(function(b){{b.style.animationPlayState=on?'running':'paused';}});
+  }}
+
+  function syncLyrics(){{
+    var t=hasAudio?aud.currentTime:0;
     document.getElementById('ktime').textContent=fmt(t);
     if(aud.duration) document.getElementById('kprog').style.width=(t/aud.duration*100)+'%';
     var idx=-1;
-    for(var i=0;i<caps.length;i++){{ if(caps[i].s<=t&&caps[i].e>=t){{idx=i;break;}} }}
+    for(var i=0;i<caps.length;i++){{if(caps[i].s<=t&&caps[i].e>=t){{idx=i;break;}}}}
     if(idx!==lastIdx){{
       lastIdx=idx;
       document.getElementById('kcurr').textContent=idx>=0?caps[idx].t:'';
@@ -739,61 +780,49 @@ def karaoke_player_html(video_id, captions, audio_b64=None, audio_mime="audio/wa
       document.getElementById('knext').textContent=(idx>=0&&idx<caps.length-1)?caps[idx+1].t:'';
     }}
   }}
-  window.togglePlay=togglePlay; window.skip=skip; window.seekClick=seekClick;
-}})();
-</script>
-"""
-    else:
-        # ── YouTube IFrame mode (no audio uploaded) ────────────────────────────
-        caps_json2 = caps_json
-        return f"""
-<div style="background:#0d0d1a;padding:18px;border-radius:14px;font-family:Arial,sans-serif">
-  <div id="ytplayer-{video_id}" style="margin-bottom:14px"></div>
-  <div style="text-align:center;padding:20px 16px;background:#111827;border-radius:12px;
-       border:2px solid #f0c040;min-height:160px;display:flex;flex-direction:column;
-       justify-content:center;align-items:center;gap:12px">
-    <div id="kprev" style="color:#444;font-size:1.05rem;font-style:italic;min-height:1.4em"></div>
-    <div id="kcurr" style="color:#f0c040;font-size:2rem;font-weight:bold;min-height:2.6em;
-         text-shadow:0 0 24px rgba(240,192,64,0.6);text-align:center;padding:0 20px"></div>
-    <div id="knext" style="color:#444;font-size:1.05rem;font-style:italic;min-height:1.4em"></div>
-    <div style="width:90%;background:#222;border-radius:4px;height:4px;margin-top:8px">
-      <div id="kprog" style="background:#f0c040;height:4px;border-radius:4px;width:0%"></div>
-    </div>
-  </div>
-  <p style="color:#666;font-size:0.8rem;text-align:center;margin-top:8px">
-    ▶ לחץ Play בנגן ← המילים יסונכרנו אוטומטית
-  </p>
-</div>
-<script>
-(function(){{
-  var caps={caps_json2}, player=null, si=null, lastIdx=-2;
-  var totalDur=caps.length>0?caps[caps.length-1].e:0;
-  function sync(){{
-    if(!player||!player.getCurrentTime) return;
-    var t=player.getCurrentTime();
-    if(totalDur>0) document.getElementById('kprog').style.width=(t/totalDur*100)+'%';
-    var idx=-1;
-    for(var i=0;i<caps.length;i++){{ if(caps[i].s<=t&&caps[i].e>=t){{idx=i;break;}} }}
-    if(idx!==lastIdx){{
-      lastIdx=idx;
-      document.getElementById('kcurr').textContent=idx>=0?caps[idx].t:'';
-      document.getElementById('kprev').textContent=idx>0?caps[idx-1].t:'';
-      document.getElementById('knext').textContent=(idx>=0&&idx<caps.length-1)?caps[idx+1].t:'';
-    }}
-  }}
-  function onYouTubeIframeAPIReady(){{
-    player=new YT.Player('ytplayer-{video_id}',{{
-      height:'340',width:'100%',videoId:'{video_id}',
-      playerVars:{{rel:0,modestbranding:1}},
-      events:{{onStateChange:function(e){{
-        if(e.data===1){{if(!si)si=setInterval(sync,80);}}
-        else{{clearInterval(si);si=null;}}
-      }}}}
+
+  if(hasAudio){{
+    aud.addEventListener('loadedmetadata',function(){{
+      document.getElementById('kdur').textContent=fmt(aud.duration);
     }});
+    aud.addEventListener('play',function(){{
+      playing=true;
+      document.getElementById('kplaybtn').textContent='⏸';
+      document.getElementById('kstatus').textContent='מנגן...';
+      setVis(true);
+      if(!si) si=setInterval(syncLyrics,80);
+    }});
+    aud.addEventListener('pause',function(){{
+      playing=false;
+      document.getElementById('kplaybtn').textContent='▶';
+      document.getElementById('kstatus').textContent='מושהה';
+      setVis(false);
+      clearInterval(si);si=null;
+    }});
+    aud.addEventListener('ended',function(){{
+      playing=false;
+      document.getElementById('kplaybtn').textContent='▶';
+      document.getElementById('kstatus').textContent='סיים';
+      setVis(false);
+      clearInterval(si);si=null;
+    }});
+    aud.addEventListener('seeked',syncLyrics);
   }}
-  window.onYouTubeIframeAPIReady=onYouTubeIframeAPIReady;
-  if(!window.YT){{var tag=document.createElement('script');tag.src='https://www.youtube.com/iframe_api';document.head.appendChild(tag);}}
-  else onYouTubeIframeAPIReady();
+
+  window.kToggle=function(){{
+    if(!hasAudio){{alert('העלה קובץ אודיו (ללא זמר) תחילה');return;}}
+    aud.paused?aud.play():aud.pause();
+  }};
+  window.kSkip=function(s){{
+    if(!hasAudio)return;
+    aud.currentTime=Math.max(0,Math.min(aud.duration||999,aud.currentTime+s));
+  }};
+  window.kSeek=function(e){{
+    if(!hasAudio||!aud.duration)return;
+    var bar=document.getElementById('progbar');
+    var ratio=(e.clientX-bar.getBoundingClientRect().left)/bar.offsetWidth;
+    aud.currentTime=Math.max(0,Math.min(aud.duration,ratio*aud.duration));
+  }};
 }})();
 </script>
 """
