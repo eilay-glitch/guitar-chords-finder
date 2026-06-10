@@ -652,6 +652,181 @@ def create_karaoke_video(captions, audio_path, output_path):
 
 
 # ── KARAOKE PLAYER — YouTube player + synced lyrics ───────────────────────────
+def karaoke_custom_player_html(captions, audio_b64, audio_mime="audio/wav"):
+    """
+    Custom karaoke player — no YouTube.
+    Animated background + colored lyrics by timing + full controls.
+    audio_b64: base64 instrumental audio string.
+    """
+    caps_json = json.dumps([
+        {"s": round(s, 2), "e": round(e, 2), "t": t}
+        for s, e, t in captions
+    ])
+    return f"""
+<div style="background:linear-gradient(135deg,#0a0a14,#12122a,#0a1420);
+     border-radius:16px;overflow:hidden;font-family:Arial,sans-serif;
+     width:100%;direction:rtl;box-shadow:0 8px 40px rgba(0,0,0,0.8)">
+
+  <!-- Canvas background animation -->
+  <canvas id="kcanvas" style="position:absolute;opacity:0.18;pointer-events:none"
+          width="900" height="500"></canvas>
+
+  <!-- Lyrics area -->
+  <div style="position:relative;min-height:320px;display:flex;flex-direction:column;
+       justify-content:center;align-items:center;padding:30px 20px;gap:18px;z-index:1">
+
+    <!-- Previous line -->
+    <div id="kprev" style="color:#2a2a4a;font-size:1.15rem;font-weight:600;
+         min-height:1.6em;transition:all 0.5s;text-align:center;
+         max-width:760px;letter-spacing:0.5px"></div>
+
+    <!-- Current line — gold + glow -->
+    <div id="kcurr" style="color:#f0c040;font-size:2.3rem;font-weight:bold;
+         text-shadow:0 0 40px rgba(240,192,64,0.7),0 0 80px rgba(240,192,64,0.3);
+         min-height:3em;transition:all 0.2s;text-align:center;
+         max-width:760px;line-height:1.35;letter-spacing:0.5px;
+         animation:kpulse 1.5s ease-in-out infinite alternate"></div>
+
+    <!-- Next line -->
+    <div id="knext" style="color:#2a2a4a;font-size:1.15rem;font-weight:600;
+         min-height:1.6em;transition:all 0.5s;text-align:center;
+         max-width:760px;letter-spacing:0.5px"></div>
+  </div>
+
+  <!-- Progress bar -->
+  <div style="padding:0 24px 6px;position:relative;z-index:1">
+    <div id="kprogbar" style="width:100%;background:#1a1a2e;border-radius:8px;
+         height:8px;cursor:pointer;position:relative" onclick="kSeek(event)">
+      <div id="kprog" style="background:linear-gradient(90deg,#f0c040,#ff8c00);
+           height:8px;border-radius:8px;width:0%;pointer-events:none;
+           transition:width 0.1s;box-shadow:0 0 8px rgba(240,192,64,0.5)"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;color:#444;
+         font-size:0.8rem;margin-top:5px">
+      <span id="ktime">0:00</span><span id="kdur">0:00</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div style="display:flex;justify-content:center;align-items:center;gap:18px;
+       padding:14px 24px 22px;position:relative;z-index:1">
+
+    <button onclick="kSkip(-10)"
+      style="background:#12122a;color:#f0c040;border:2px solid #2a2a4a;
+             border-radius:50%;width:48px;height:48px;font-size:0.9rem;
+             cursor:pointer;font-weight:bold;transition:all 0.2s"
+      onmouseover="this.style.borderColor='#f0c040'"
+      onmouseout="this.style.borderColor='#2a2a4a'">-10</button>
+
+    <button id="kplaybtn" onclick="kToggle()"
+      style="background:linear-gradient(135deg,#f0c040,#ff8c00);color:#000;
+             border:none;border-radius:50%;width:66px;height:66px;font-size:1.9rem;
+             cursor:pointer;font-weight:bold;
+             box-shadow:0 0 24px rgba(240,192,64,0.5);transition:transform 0.1s"
+      onmousedown="this.style.transform='scale(0.9)'"
+      onmouseup="this.style.transform='scale(1)'">▶</button>
+
+    <button onclick="kSkip(10)"
+      style="background:#12122a;color:#f0c040;border:2px solid #2a2a4a;
+             border-radius:50%;width:48px;height:48px;font-size:0.9rem;
+             cursor:pointer;font-weight:bold;transition:all 0.2s"
+      onmouseover="this.style.borderColor='#f0c040'"
+      onmouseout="this.style.borderColor='#2a2a4a'">+10</button>
+
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:1.1rem">🔊</span>
+      <input type="range" min="0" max="1" step="0.05" value="1"
+        style="width:90px;accent-color:#f0c040;cursor:pointer"
+        oninput="document.getElementById('kaud').volume=this.value">
+    </div>
+  </div>
+
+  <audio id="kaud" src="data:{audio_mime};base64,{audio_b64}" preload="auto"></audio>
+</div>
+
+<style>
+@keyframes kpulse {{
+  from {{ text-shadow: 0 0 30px rgba(240,192,64,0.5); }}
+  to   {{ text-shadow: 0 0 60px rgba(240,192,64,0.9), 0 0 100px rgba(255,140,0,0.4); }}
+}}
+</style>
+
+<script>
+(function(){{
+  var caps={caps_json};
+  var aud=document.getElementById('kaud');
+  var si=null, lastIdx=-2;
+
+  // Canvas particle animation
+  var canvas=document.getElementById('kcanvas');
+  var ctx=canvas.getContext('2d');
+  var particles=[];
+  for(var i=0;i<60;i++) particles.push({{
+    x:Math.random()*900, y:Math.random()*500,
+    r:Math.random()*2+0.5, vx:(Math.random()-0.5)*0.4, vy:(Math.random()-0.5)*0.4,
+    a:Math.random()
+  }});
+  function drawParticles(){{
+    ctx.clearRect(0,0,900,500);
+    particles.forEach(function(p){{
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle='rgba(240,192,64,'+p.a+')'; ctx.fill();
+      p.x+=p.vx; p.y+=p.vy; p.a+=0.005;
+      if(p.a>0.8)p.a=0; if(p.x<0||p.x>900)p.vx*=-1; if(p.y<0||p.y>500)p.vy*=-1;
+    }});
+    requestAnimationFrame(drawParticles);
+  }}
+  drawParticles();
+
+  function fmt(s){{
+    if(!s||isNaN(s))return'0:00';
+    return Math.floor(s/60)+':'+(Math.floor(s%60)<10?'0':'')+Math.floor(s%60);
+  }}
+
+  function sync(){{
+    var t=aud.currentTime, dur=aud.duration||0;
+    document.getElementById('ktime').textContent=fmt(t);
+    document.getElementById('kdur').textContent=fmt(dur);
+    if(dur>0) document.getElementById('kprog').style.width=(t/dur*100)+'%';
+    var idx=-1;
+    for(var i=0;i<caps.length;i++){{if(caps[i].s<=t&&caps[i].e>=t){{idx=i;break;}}}}
+    if(idx!==lastIdx){{
+      lastIdx=idx;
+      document.getElementById('kcurr').textContent=idx>=0?caps[idx].t:'';
+      document.getElementById('kprev').textContent=idx>0?caps[idx-1].t:'';
+      document.getElementById('knext').textContent=(idx>=0&&idx<caps.length-1)?caps[idx+1].t:'';
+    }}
+  }}
+
+  aud.addEventListener('loadedmetadata',function(){{
+    document.getElementById('kdur').textContent=fmt(aud.duration);
+  }});
+  aud.addEventListener('play',function(){{
+    document.getElementById('kplaybtn').textContent='⏸';
+    if(!si) si=setInterval(sync,80);
+  }});
+  aud.addEventListener('pause',function(){{
+    document.getElementById('kplaybtn').textContent='▶';
+    clearInterval(si);si=null;
+  }});
+  aud.addEventListener('ended',function(){{
+    document.getElementById('kplaybtn').textContent='▶';
+    document.getElementById('kcurr').textContent='';
+    clearInterval(si);si=null;
+  }});
+  aud.addEventListener('seeked',sync);
+
+  window.kToggle=function(){{ aud.paused?aud.play():aud.pause(); }};
+  window.kSkip=function(s){{ aud.currentTime=Math.max(0,Math.min(aud.duration||999,aud.currentTime+s)); }};
+  window.kSeek=function(e){{
+    var bar=document.getElementById('kprogbar');
+    aud.currentTime=(e.clientX-bar.getBoundingClientRect().left)/bar.offsetWidth*(aud.duration||0);
+  }};
+}})();
+</script>
+"""
+
+
 def karaoke_player_html(video_id, captions):
     caps_json = json.dumps([
         {"s": round(s, 2), "e": round(e, 2), "t": t}
@@ -951,14 +1126,22 @@ if search_btn and song_input.strip():
     karaoke_video_id = None
 
     if karaoke_mode and video_id:
-        with st.spinner("🎤 מחפש גרסת קריוקי ב-YouTube ומביא כתוביות..."):
-            # Get captions from original video
+        with st.spinner("🎤 מביא כתוביות..."):
             captions = get_captions_from_youtube(video_id)
             if not captions:
                 captions = get_captions_yt_dlp(video_id)
-            # Find karaoke/instrumental version on YouTube
             yt_karaoke = youtube_search_karaoke(song)
             karaoke_video_id = yt_karaoke["video_id"] if yt_karaoke else video_id
+
+        if YT_DLP_OK:
+            tmpdir = tempfile.mkdtemp()
+            with st.spinner("🎵 מוריד אודיו..."):
+                audio_path, dl_err = download_audio_yt_dlp(video_id, tmpdir)
+            if audio_path:
+                with st.spinner("🤖 מפריד ווקאל (AI) — כ-2 דקות..."):
+                    instrumental_path, sep_err = separate_vocals_demucs(audio_path, tmpdir)
+                if not instrumental_path:
+                    instrumental_path = audio_path  # fallback: original audio
 
     # ── YOUTUBE / KARAOKE PLAYER ───────────────────────────────────────────────
     st.markdown("---")
@@ -967,8 +1150,15 @@ if search_btn and song_input.strip():
         st.markdown("<h3 style='color:#9b59b6'>🎤 קריוקי — מילים מסונכרנות</h3>",
                     unsafe_allow_html=True)
 
-        player_vid = karaoke_video_id or video_id
-        components.html(karaoke_player_html(player_vid, captions), height=700)
+        # Use custom player if we have instrumental, otherwise YouTube
+        if instrumental_path and os.path.exists(instrumental_path) and captions:
+            import base64
+            with open(instrumental_path, "rb") as f:
+                audio_b64 = base64.b64encode(f.read()).decode()
+            components.html(karaoke_custom_player_html(captions, audio_b64), height=620)
+        else:
+            player_vid = karaoke_video_id or video_id
+            components.html(karaoke_player_html(player_vid, captions), height=700)
 
     else:
         # Normal YouTube embed
